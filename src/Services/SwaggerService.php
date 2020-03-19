@@ -108,7 +108,7 @@ class SwaggerService
 
     protected function generateSecurityDefinition()
     {
-        $availableTypes = ['jwt', 'laravel'];
+        $availableTypes = ['jwt', 'laravel', 'bearer'];
         $security = $this->security;
 
         if (empty($security)) {
@@ -140,6 +140,12 @@ class SwaggerService
                     'name' => 'Cookie',
                     'in' => 'header'
                 ];
+            case 'bearer':
+                return [
+                    'type' => 'apiKey',
+                    'name' => 'Authorization',
+                    'in' => 'header'
+                ];    
         }
     }
 
