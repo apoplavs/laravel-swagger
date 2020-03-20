@@ -31,7 +31,7 @@ class LocalDataCollector implements DataCollectorInterface
     {
         return self::$data;
     }
-
+//@todo додати можливість імпорт в YAML yaml_emit
     public function saveData()
     {
         $content = json_encode(self::$data);

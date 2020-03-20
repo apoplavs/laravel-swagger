@@ -65,7 +65,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | Library name, which used to secure the project.
-    | Available values: "jwt", "laravel", "null"
+    | Available values: "OAuth", jwt", "laravel", "null"
     */
 
     'security' => '',
@@ -79,8 +79,10 @@ return [
 
         'code-descriptions' => [
             '200' => 'Operation successfully done',
-            '204' => 'Operation successfully done',
-            '404' => 'This entity not found'
+            '204' => 'Operation successfully done, no data',
+            '401' => 'Unauthorized',
+            '404' => 'This entity not found',
+            '405' => 'Method Not Allowed'
         ]
     ],
 
@@ -100,5 +102,7 @@ return [
     | If config not set, will be using ronasit/local-data-collector
     */
 
-    'data_collector' => \RonasIT\Support\AutoDoc\DataCollectors\LocalDataCollector::class
+    'data_collector' => \RonasIT\Support\AutoDoc\DataCollectors\LocalDataCollector::class,
+
+    'enabled'        => env('AUTODOC_ENABLED', false),
 ];

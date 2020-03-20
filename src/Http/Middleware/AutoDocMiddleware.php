@@ -11,7 +11,7 @@ use RonasIT\Support\AutoDoc\Services\SwaggerService;
 class AutoDocMiddleware
 {
     protected $service;
-    public static $skipped = false;
+    public static $skipped = true;
 
     public function __construct()
     {
@@ -21,6 +21,10 @@ class AutoDocMiddleware
     public function handle($request, Closure $next)
     {
         $response = $next($request);
+
+        if (config('auto-doc.enabled', false)) {
+            self::$skipped = false;
+        }
 
         if ((config('app.env') == 'testing') && !self::$skipped) {
             $this->service->addData($request, $response);

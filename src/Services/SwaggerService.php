@@ -48,7 +48,7 @@ class SwaggerService
 
             $this->annotationReader = new AnnotationReader(new Parser, new ArrayCache);;
 
-            $this->security = config('auto-doc.security');
+            $this->security = config('auto-doc.security', '');
 
             $this->data = $this->dataCollector->getTmpData();
 
@@ -62,6 +62,7 @@ class SwaggerService
 
     protected function setDataCollector()
     {
+        // todo в конфіг додати можливасть вибору дата колектора JSON OR YAML
         $dataCollectorClass = config('auto-doc.data_collector');
 
         if (empty($dataCollectorClass)) {
@@ -108,7 +109,7 @@ class SwaggerService
 
     protected function generateSecurityDefinition()
     {
-        $availableTypes = ['jwt', 'laravel', 'bearer'];
+        $availableTypes = ['OAuth', 'jwt', 'laravel'];
         $security = $this->security;
 
         if (empty($security)) {
@@ -127,25 +128,26 @@ class SwaggerService
     protected function generateSecurityDefinitionObject($type)
     {
         switch ($type) {
+            case 'OAuth':
+                return [
+                    'description' => 'The authorization token, usually represented as: Bearer ...',
+                    'type'        => 'apiKey',
+                    'name'        => 'Authorization',
+                    'in'          => 'header'
+                ];
             case 'jwt':
                 return [
                     'type' => 'apiKey',
                     'name' => 'authorization',
-                    'in' => 'header'
+                    'in'   => 'header'
                 ];
 
             case 'laravel':
                 return [
                     'type' => 'apiKey',
                     'name' => 'Cookie',
-                    'in' => 'header'
-                ];
-            case 'bearer':
-                return [
-                    'type' => 'apiKey',
-                    'name' => 'Authorization',
-                    'in' => 'header'
-                ];    
+                    'in'   => 'header'
+                ]; 
         }
     }
 
@@ -362,6 +364,10 @@ class SwaggerService
             'properties' => []
         ];
         foreach ($rules as $parameter => $rule) {
+            if (is_array($rule)) {
+                $rule = $this->convertArrToString($rule);
+            }
+
             $rulesArray = explode('|', $rule);
             $parameterType = $this->getParameterType($rulesArray);
             $this->saveParameterType($data, $parameter, $parameterType);
@@ -374,6 +380,19 @@ class SwaggerService
 
         $data['example'] = $this->generateExample($data['properties']);
         $this->data['definitions'][$objectName . 'Object'] = $data;
+    }
+
+    protected function convertArrToString(array $rules=[]) : string
+    {
+        $strParams = '';
+
+        foreach ($rules as $key => $rule) {
+           if (is_string($rule)) {
+               $strParams .= $rule . '|';
+           }
+        }
+
+        return substr($strParams, 0, -1);
     }
 
     protected function getParameterType(array $validation)
@@ -526,16 +545,18 @@ class SwaggerService
     protected function requestSupportAuth()
     {
         switch ($this->security) {
+            case 'OAuth' :
+                $this->request->header('Authorization');
+                return true;
             case 'jwt' :
-                $header = $this->request->header('authorization');
-                break;
+                $this->request->header('authorization');
+                return true;
             case 'laravel' :
-                $header = $this->request->cookie('__ym_uid');
-                break;
+                $this->request->cookie('__ym_uid');
+                return true;
         }
 
-        return !empty($header);
-
+        return false;
     }
 
     protected function parseRequestName($request)
@@ -552,20 +573,10 @@ class SwaggerService
     {
         $request = $this->getConcreteRequest();
 
-        return elseChain(
-            function () use ($request, $code) {
-                return empty($request) ? Response::$statusTexts[$code] : null;
-            },
-            function () use ($request, $code) {
-                return $this->annotationReader->getClassAnnotations($request)->get("_{$code}");
-            },
-            function () use ($code) {
-                return config("auto-doc.defaults.code-descriptions.{$code}");
-            },
-            function () use ($code) {
-                return Response::$statusTexts[$code];
-            }
-        );
+        return  (empty($request) ? Response::$statusTexts[$code] : null) ||
+                $this->annotationReader->getClassAnnotations($request)->get("_{$code}") ||
+                config("auto-doc.defaults.code-descriptions.{$code}") ||
+                Response::$statusTexts[$code];
     }
 
     protected function getActionName($uri)
