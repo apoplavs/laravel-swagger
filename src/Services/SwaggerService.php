@@ -14,7 +14,7 @@ use RonasIT\Support\AutoDoc\Interfaces\DataCollectorInterface;
 use RonasIT\Support\AutoDoc\Traits\GetDependenciesTrait;
 use RonasIT\Support\AutoDoc\Exceptions\WrongSecurityConfigException;
 use RonasIT\Support\AutoDoc\Exceptions\DataCollectorClassNotFoundException;
-use RonasIT\Support\AutoDoc\DataCollectors\LocalDataCollector;
+use RonasIT\Support\AutoDoc\DataCollectors\JsonDataCollector;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Http\Testing\File;
 
@@ -24,6 +24,8 @@ use Illuminate\Http\Testing\File;
 class SwaggerService
 {
     use GetDependenciesTrait;
+
+    const ALLOWED_SECURITY = ['bearerAuth', 'basicAuth', 'ApiKeyAuth'];
 
     protected $annotationReader;
     protected $dataCollector;
@@ -60,13 +62,16 @@ class SwaggerService
         }
     }
 
+    /**
+     * @throws \RonasIT\Support\AutoDoc\Exceptions\DataCollectorClassNotFoundException
+     */
     protected function setDataCollector()
     {
         // todo в конфіг додати можливасть вибору дата колектора JSON OR YAML
         $dataCollectorClass = config('auto-doc.data_collector');
 
         if (empty($dataCollectorClass)) {
-            $this->dataCollector = app(LocalDataCollector::class);
+            $this->dataCollector = app(JsonDataCollector::class);
         } elseif (!class_exists($dataCollectorClass)) {
             throw new DataCollectorClassNotFoundException();
         } else {
@@ -74,15 +79,16 @@ class SwaggerService
         }
     }
 
-    protected function generateEmptyData()
+    /**
+     * @return array
+     * @throws \RonasIT\Support\AutoDoc\Exceptions\WrongSecurityConfigException
+     * @throws \Throwable
+     */
+    protected function generateEmptyData(): array
     {
         $data = [
-            'swagger' => config('auto-doc.swagger.version'),
-            'host' => $this->getAppUrl(),
-            'basePath' => config('auto-doc.basePath'),
-            'schemes' => config('auto-doc.schemes'),
-            'paths' => [],
-            'definitions' => config('auto-doc.definitions')
+            'openapi' => config('auto-doc.openapi.version'),
+            'servers' => $this->getServers()
         ];
 
         $info = $this->prepareInfo(config('auto-doc.info'));
@@ -90,9 +96,10 @@ class SwaggerService
             $data['info'] = $info;
         }
 
-        $securityDefinitions = $this->generateSecurityDefinition();
-        if (!empty($securityDefinitions)) {
-            $data['securityDefinitions'] = $securityDefinitions;
+        $securitySchemes = $this->generateSecurityDefinition();
+
+        if (!empty($securitySchemes)) {
+            $data['components']['securitySchemes'] = $securitySchemes;
         }
 
         $data['info']['description'] = view($data['info']['description'])->render();
@@ -100,64 +107,86 @@ class SwaggerService
         return $data;
     }
 
-    protected function getAppUrl()
+    /**
+     * Merge this app URL with servers from config
+     *
+     * @return array
+     */
+    protected function getServers() : array
     {
-        $url = config('app.url');
+        $currentServer = [
+                "url" => config('app.url'),
+                "description" => 'This app server URL'
+            ];
 
-        return str_replace(['http://', 'https://', '/'], '', $url);
+        return array_merge([$currentServer], config('auto-doc.servers'));
     }
 
+    /**
+     * Set Security definition in general setting
+     * @return array|string
+     * @throws \RonasIT\Support\AutoDoc\Exceptions\WrongSecurityConfigException
+     */
     protected function generateSecurityDefinition()
     {
-        $availableTypes = ['OAuth', 'jwt', 'laravel'];
         $security = $this->security;
 
         if (empty($security)) {
             return '';
         }
 
-        if (!in_array($security, $availableTypes)) {
-            throw new WrongSecurityConfigException();
+        if (!in_array($security, self::ALLOWED_SECURITY)) {
+            throw new WrongSecurityConfigException($security);
+        }
+
+        switch ($security) {
+            case 'bearerAuth':
+                $securityConfig = [
+                    'description'  => 'The authorization token, usually represented as: Bearer ...',
+                    'type'         => 'http',
+                    'scheme'       => 'bearer',
+                    'bearerFormat' => 'JWT'
+                ];
+                break;
+            case 'basicAuth':
+                $securityConfig =  [
+                    'description'  => 'Base64-encoded string username:password',
+                    'type'         => 'http',
+                    'scheme'       => 'basic'
+                ];
+                break;
+            case 'ApiKeyAuth':
+                $securityConfig =  [
+                    'description'  => 'Header X-API-KEY with your value',
+                    'type'         => 'apiKey',
+                    'in'           => 'header',
+                    'name'         => 'X-API-KEY'
+                ];
+                break;
+            default:
+                $securityConfig = [];
         }
 
         return [
-            $security => $this->generateSecurityDefinitionObject($security)
+            $security => $securityConfig
         ];
     }
 
-    protected function generateSecurityDefinitionObject($type)
-    {
-        switch ($type) {
-            case 'OAuth':
-                return [
-                    'description' => 'The authorization token, usually represented as: Bearer ...',
-                    'type'        => 'apiKey',
-                    'name'        => 'Authorization',
-                    'in'          => 'header'
-                ];
-            case 'jwt':
-                return [
-                    'type' => 'apiKey',
-                    'name' => 'authorization',
-                    'in'   => 'header'
-                ];
-
-            case 'laravel':
-                return [
-                    'type' => 'apiKey',
-                    'name' => 'Cookie',
-                    'in'   => 'header'
-                ]; 
-        }
-    }
-
+    /**
+     * Main function to add data into
+     * doc.json file
+     * @param \Illuminate\Http\Request $request
+     * @param $response
+     * @throws \ReflectionException
+     * @throws \RonasIT\Support\AutoDoc\Exceptions\WrongSecurityConfigException
+     */
     public function addData(Request $request, $response)
     {
         $this->request = $request;
 
         $this->prepareItem();
 
-        $this->parseRequest($request);
+        $this->parseRequest();
         $this->parseResponse($response);
 
         $this->dataCollector->saveTmpData($this->data);
@@ -165,17 +194,16 @@ class SwaggerService
 
     protected function prepareItem()
     {
-        $this->uri = "/{$this->getUri()}";
+        $this->uri = $this->getUri();
         $this->method = strtolower($this->request->getMethod());
 
         if (empty(Arr::get($this->data, "paths.{$this->uri}.{$this->method}"))) {
             $this->data['paths'][$this->uri][$this->method] = [
-                'tags' => [],
-                'consumes' => [],
-                'produces' => [],
-                'parameters' => $this->getPathParams(),
-                'responses' => [],
-                'security' => [],
+                'tags'        => [],
+                'content'     => [],
+                'parameters'  => $this->getPathParams(),
+                'responses'   => [],
+                'security'    => [],
                 'description' => ''
             ];
         }
@@ -186,10 +214,10 @@ class SwaggerService
     protected function getUri()
     {
         $uri = $this->request->route()->uri();
-        $basePath = preg_replace("/^\//", '', config('auto-doc.basePath'));
+        $basePath = str_replace('/', '', config('auto-doc.basePath'));
         $preparedUri = preg_replace("/^{$basePath}/", '', $uri);
 
-        return preg_replace("/^\//", '', $preparedUri);
+        return str_replace('//', '/', '/' . $basePath . '/' . $preparedUri);
     }
 
     protected function getPathParams()
@@ -217,11 +245,14 @@ class SwaggerService
         return $result;
     }
 
-    protected function parseRequest($request)
+    /**
+     * @throws \ReflectionException
+     * @throws \RonasIT\Support\AutoDoc\Exceptions\WrongSecurityConfigException
+     */
+    protected function parseRequest()
     {
-        $this->saveConsume();
+        $this->saveContentType();
         $this->saveTags();
-        $this->saveSecurity();
 
         $concreteRequest = $this->getConcreteRequest();
 
@@ -233,21 +264,23 @@ class SwaggerService
 
         $annotations = $this->annotationReader->getClassAnnotations($concreteRequest);
 
+        $this->saveSecurity($annotations->get('security'));
         $this->saveParameters($concreteRequest, $annotations);
-        $this->saveDescription($concreteRequest, $annotations);
+        $this->saveSummary($concreteRequest, $annotations);
+        $this->saveDescription($annotations);
     }
 
     protected function parseResponse($response)
     {
-        $produceList = $this->data['paths'][$this->uri][$this->method]['produces'];
+        $contentTypeList = $this->data['paths'][$this->uri][$this->method]['content'];
 
-        $produce = $response->headers->get('Content-type');
-        if (is_null($produce)) {
-            $produce = 'text/plain';
+        $contentType = $response->headers->get('Content-type');
+        if (is_null($contentType)) {
+            $contentType = 'application/json';
         }
 
-        if (!in_array($produce, $produceList)) {
-            $this->item['produces'][] = $produce;
+        if (!in_array($contentType, $contentTypeList)) {
+            $this->item['content'][] = $contentType;
         }
 
         $responses = $this->item['responses'];
@@ -255,41 +288,51 @@ class SwaggerService
 
         if (!in_array($code, $responses)) {
             $this->saveExample(
-                $response->getStatusCode(),
+                $code,
                 $response->getContent(),
-                $produce
+                $contentType
             );
         }
     }
 
-    protected function saveExample($code, $content, $produce)
+    protected function saveExample($code, $content, $contentType)
     {
         $description = $this->getResponseDescription($code);
         $availableContentTypes = [
             'application',
             'text'
         ];
-        $explodedContentType = explode('/', $produce);
+        $explodedContentType = explode('/', $contentType);
 
         if (in_array($explodedContentType[0], $availableContentTypes)) {
-            $this->item['responses'][$code] = $this->makeResponseExample($content, $produce, $description);
+            $this->item['responses'][$code] = $this->makeResponseExample($content, $contentType, $description);
         } else {
             $this->item['responses'][$code] = '*Unavailable for preview*';
         }
     }
 
-    protected function makeResponseExample($content, $mimeType, $description = '')
+    /**
+     * @param $content
+     * @param string $mimeType
+     * @param string $description
+     * @return array
+     */
+    protected function makeResponseExample($content, string $mimeType = 'application/json', $description = ''): array
     {
         $responseExample = [
             'description' => $description
         ];
 
         if ($mimeType === 'application/json') {
-            $responseExample['schema'] = [
+            $responseExample['content']['application/json']['schema'] = [
+                'type'    => 'object',
                 'example' => json_decode($content, true),
             ];
         } else {
-            $responseExample['examples']['example'] = $content;
+            $responseExample['content']['text/plain']['schema'] = [
+                'type'    => 'string',
+                'example' => $content,
+            ];
         }
 
         return $responseExample;
@@ -348,7 +391,7 @@ class SwaggerService
                     'description' => '',
                     'required' => true,
                     'schema' => [
-                        "\$ref" => "#/definitions/{$actionName}Object"
+                        "\$ref" => "#/components/parameters/{$actionName}Object"
                     ]
                 ];
             }
@@ -379,7 +422,7 @@ class SwaggerService
         }
 
         $data['example'] = $this->generateExample($data['properties']);
-        $this->data['definitions'][$objectName . 'Object'] = $data;
+        $this->data['components']['parameters'][$objectName . 'Object'] = $data;
     }
 
     protected function convertArrToString(array $rules=[]) : string
@@ -457,6 +500,11 @@ class SwaggerService
         return empty($bodyParamExisted);
     }
 
+    /**
+     * Get concrete class of Request
+     * witch take the function
+     * @return mixed|null
+     */
     public function getConcreteRequest()
     {
         $controller = $this->request->route()->getActionName();
@@ -482,56 +530,105 @@ class SwaggerService
         });
     }
 
-    public function saveConsume()
+    /**
+     * Save the Content-type in request
+     */
+    public function saveContentType()
     {
-        $consumeList = $this->data['paths'][$this->uri][$this->method]['consumes'];
-        $consume = $this->request->header('Content-Type');
-
-        if (!empty($consume) && !in_array($consume, $consumeList)) {
-            $this->item['consumes'][] = $consume;
+        switch ($this->method) {
+            case 'POST':
+            case 'post':
+                $contentType = 'application/json';
+                break;
+            case 'PUT':
+            case 'put':
+                $contentType = 'application/x-www-form-urlencoded';
+                break;
+            default:
+                $contentType = $this->request->header('Content-Type');
         }
-    }
 
-    public function saveTags()
-    {
-        $tagIndex = 1;
-
-        $explodedUri = explode('/', $this->uri);
-
-        $tag = Arr::get($explodedUri, $tagIndex);
-
-        $this->item['tags'] = [$tag];
-    }
-
-    public function saveDescription($request, AnnotationsBagInterface $annotations)
-    {
-        $this->item['summary'] = $this->getSummary($request, $annotations);
-
-        $description = $annotations->get('description');
-
-        if (!empty($description)) {
-            $this->item['description'] = $description;
-        }
-    }
-
-    protected function saveSecurity()
-    {
-        if ($this->requestSupportAuth()) {
-            $this->addSecurityToOperation();
-        }
-    }
-
-    protected function addSecurityToOperation()
-    {
-        $security = &$this->data['paths'][$this->uri][$this->method]['security'];
-        if (empty($security)) {
-            $security[] = [
-                "{$this->security}" => []
+        if (!empty($contentType)) {
+            $this->item['requestBody']['content'] = [
+                $contentType => [
+                    'schema' => [
+                        'type' => 'object'
+                    ]
+                ]
             ];
         }
     }
 
-    protected function getSummary($request, AnnotationsBagInterface $annotations)
+    /**
+     * Get second (or first if second does not exists) parameter from URL name
+     * and save it as tags
+     * swagger separates requests by tags
+     */
+    public function saveTags()
+    {
+        $explodedUri = explode('/', $this->uri);
+
+        if (Arr::exists($explodedUri, 3)) {
+            $this->item['tags'][] = Arr::get($explodedUri, 3);
+        } elseif (Arr::exists($explodedUri, 2)) {
+            $this->item['tags'][] = Arr::get($explodedUri, 2);
+        } else {
+            $this->item['tags'][] = Arr::get($explodedUri, 1);
+        }
+    }
+
+    /**
+     * Save the description of the request
+     *
+     * @param \Minime\Annotations\Interfaces\AnnotationsBagInterface $annotations
+     */
+    public function saveDescription(AnnotationsBagInterface $annotations)
+    {
+        $description = $annotations->get('description');
+
+        if (!empty($description)) {
+            $this->item['description'] = $description;
+        } else {
+            $this->item['description'] = '';
+        }
+    }
+
+    /**
+     * @param $security
+     * @throws \RonasIT\Support\AutoDoc\Exceptions\WrongSecurityConfigException
+     */
+    protected function saveSecurity($security)
+    {
+        if (is_string($security)) {
+            if (!in_array($security, self::ALLOWED_SECURITY)) {
+                throw new WrongSecurityConfigException($security);
+            }
+            $this->addSecurityToOperation($security);
+
+        } elseif ($security === false) {
+            return;
+        } elseif (!empty($this->security)) {
+            $this->addSecurityToOperation($this->security);
+        }
+    }
+
+    protected function addSecurityToOperation(string $securityType = '')
+    {
+        $security = &$this->data['paths'][$this->uri][$this->method]['security'];
+        if (!empty($securityType)) {
+            $security[] = [
+                "{$securityType}" => []
+            ];
+        }
+    }
+
+    /**
+     * Save the summary of the endpoint
+     *
+     * @param $request
+     * @param \Minime\Annotations\Interfaces\AnnotationsBagInterface $annotations
+     */
+    protected function saveSummary($request, AnnotationsBagInterface $annotations)
     {
         $summary = $annotations->get('summary');
 
@@ -539,24 +636,7 @@ class SwaggerService
             $summary = $this->parseRequestName($request);
         }
 
-        return $summary;
-    }
-
-    protected function requestSupportAuth()
-    {
-        switch ($this->security) {
-            case 'OAuth' :
-                $this->request->header('Authorization');
-                return true;
-            case 'jwt' :
-                $this->request->header('authorization');
-                return true;
-            case 'laravel' :
-                $this->request->cookie('__ym_uid');
-                return true;
-        }
-
-        return false;
+        $this->item['summary'] = $summary;
     }
 
     protected function parseRequestName($request)
@@ -579,6 +659,7 @@ class SwaggerService
                 Response::$statusTexts[$code];
     }
 
+    //todo зробити нормальну. коректну назву параметра
     protected function getActionName($uri)
     {
         $action = preg_replace('[\/]', '', $uri);
@@ -601,9 +682,7 @@ class SwaggerService
 
     public function getDocFileContent()
     {
-        $data = $this->dataCollector->getDocumentation();
-
-        return $data;
+        return $this->dataCollector->getDocumentation();
     }
 
     private function camelCaseToUnderScore($input)

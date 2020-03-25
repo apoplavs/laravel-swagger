@@ -28,10 +28,13 @@ return [
         |--------------------------------------------------------------------------
         |
         | You can use your custom documentation view
+        | Define your blade view in 'description' to describe the documentation
+        | and it will be render automatically by this library
         */
 
         'description' => 'swagger-description',
-        'version' => '0.0.0',
+
+        'version' => '0.0.1',
         'title' => 'Name of Your Application',
         'termsOfService' => '',
         'contact' => [
@@ -42,8 +45,16 @@ return [
             'url' => ''
         ]
     ],
-    'swagger' => [
-        'version' => '2.0'
+
+    'openapi' => [
+        'version' => '3.0.0'
+    ],
+
+    'servers' => [
+        [
+            "url" => 'https://127.0.0.1',
+            "description" => 'This is a sample server description'
+        ]
     ],
 
     /*
@@ -56,8 +67,6 @@ return [
     */
 
     'basePath' => '/',
-    'schemes' => [],
-    'definitions' => [],
 
     /*
     |--------------------------------------------------------------------------
@@ -65,7 +74,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | Library name, which used to secure the project.
-    | Available values: "OAuth", jwt", "laravel", "null"
+    | Available values: "bearerAuth", "basicAuth", "ApiKeyAuth", ""
     */
 
     'security' => '',
@@ -79,10 +88,12 @@ return [
 
         'code-descriptions' => [
             '200' => 'Operation successfully done',
-            '204' => 'Operation successfully done, no data',
+            '201' => 'Created',
+            '204' => 'Operation successfully done, no content',
             '401' => 'Unauthorized',
             '404' => 'This entity not found',
-            '405' => 'Method Not Allowed'
+            '405' => 'Method Not Allowed',
+            '422' => 'The given data was invalid'
         ]
     ],
 
@@ -96,13 +107,14 @@ return [
     | RonasIT\Support\AutoDoc\Interfaces\DataCollectorInterface interface,
     | or our data collectors from next packages:
     |
-    | ronasit/local-data-collector
-    | ronasit/laravel-remote-data-collector
+    | if you want to use YAMLDataCollector you must install yaml extension
+    | in your PHP
     |
     | If config not set, will be using ronasit/local-data-collector
     */
 
-    'data_collector' => \RonasIT\Support\AutoDoc\DataCollectors\LocalDataCollector::class,
+    'data_collector' => \RonasIT\Support\AutoDoc\DataCollectors\JsonDataCollector::class,
+    //'data_collector' => \RonasIT\Support\AutoDoc\DataCollectors\YAMLDataCollector::class,
 
     'enabled'        => env('AUTODOC_ENABLED', false),
 ];
