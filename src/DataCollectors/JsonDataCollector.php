@@ -6,10 +6,9 @@ use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use RonasIT\Support\AutoDoc\Interfaces\DataCollectorInterface;
 use RonasIT\Support\AutoDoc\Exceptions\MissedProductionFilePathException;
 
-class LocalDataCollector implements DataCollectorInterface
+class JsonDataCollector implements DataCollectorInterface
 {
     public $prodFilePath;
-    public $tempFilePath;
 
     protected static $data;
 
@@ -31,7 +30,6 @@ class LocalDataCollector implements DataCollectorInterface
     {
         return self::$data;
     }
-//@todo додати можливість імпорт в YAML yaml_emit
     public function saveData()
     {
         $content = json_encode(self::$data);
