@@ -67,7 +67,6 @@ class SwaggerService
      */
     protected function setDataCollector()
     {
-        // todo в конфіг додати можливасть вибору дата колектора JSON OR YAML
         $dataCollectorClass = config('auto-doc.data_collector');
 
         if (empty($dataCollectorClass)) {
@@ -87,13 +86,19 @@ class SwaggerService
     protected function generateEmptyData(): array
     {
         $data = [
-            'openapi' => config('auto-doc.openapi.version'),
-            'servers' => $this->getServers()
+            'openapi'    => config('auto-doc.openapi.version'),
+            'servers'    => $this->getServers(),
+            'components' => []
         ];
 
         $info = $this->prepareInfo(config('auto-doc.info'));
         if (!empty($info)) {
             $data['info'] = $info;
+        }
+
+        $defaultResponses = $this->prepareDefaultResponse(config('auto-doc.defaults.code-descriptions'));
+        if (!empty($defaultResponses)) {
+            $data['components']['responses'] = $defaultResponses;
         }
 
         $securitySchemes = $this->generateSecurityDefinition();
@@ -258,6 +263,7 @@ class SwaggerService
 
         if (empty($concreteRequest)) {
             $this->item['description'] = '';
+            $this->saveSecurity(null);
 
             return;
         }
@@ -298,6 +304,7 @@ class SwaggerService
     protected function saveExample($code, $content, $contentType)
     {
         $description = $this->getResponseDescription($code);
+
         $availableContentTypes = [
             'application',
             'text'
@@ -614,6 +621,14 @@ class SwaggerService
 
     protected function addSecurityToOperation(string $securityType = '')
     {
+        if ($this->data['paths'][$this->uri][$this->method]['security']) {
+            foreach ($this->data['paths'][$this->uri][$this->method]['security'] as $secType => $val) {
+                if ($secType == $securityType) {
+                    return;
+                }
+            }
+        }
+
         $security = &$this->data['paths'][$this->uri][$this->method]['security'];
         if (!empty($securityType)) {
             $security[] = [
@@ -653,18 +668,31 @@ class SwaggerService
     {
         $request = $this->getConcreteRequest();
 
-        return  (empty($request) ? Response::$statusTexts[$code] : null) ||
-                $this->annotationReader->getClassAnnotations($request)->get("_{$code}") ||
-                config("auto-doc.defaults.code-descriptions.{$code}") ||
-                Response::$statusTexts[$code];
+        if (!empty($request) && is_string($this->annotationReader->getClassAnnotations($request)->get("_{$code}"))) {
+            return $this->annotationReader->getClassAnnotations($request)->get("_{$code}");
+
+        } elseif (config("auto-doc.defaults.code-descriptions.{$code}")) {
+            return config("auto-doc.defaults.code-descriptions.{$code}");
+
+        } elseif (Response::$statusTexts[$code]) {
+            return Response::$statusTexts[$code];
+        }
+        return null;
     }
 
-    //todo зробити нормальну. коректну назву параметра
     protected function getActionName($uri)
     {
-        $action = preg_replace('[\/]', '', $uri);
+        $uriArr = explode('/', $uri);
+        $basePath = str_replace('/', '', config('auto-doc.basePath'));
+        $action = '';
 
-        return Str::camel($action);
+        foreach ($uriArr as $partUri) {
+            if ($partUri == $basePath) {
+                continue;
+            }
+            $action .= Str::ucfirst(Str::camel($partUri));
+        }
+        return $action;
     }
 
     protected function saveTempData()
@@ -780,6 +808,25 @@ class SwaggerService
         }
 
         return $info;
+    }
+
+    /**
+     * @param $responses
+     * @return mixed
+     */
+    protected function prepareDefaultResponse($responses): array
+    {
+        $defaultResponses = [];
+
+        if (empty($responses)) {
+            return [];
+        }
+
+        foreach ($responses as $code => $description) {
+            $defaultResponses[$code]['description'] = $description;
+        }
+
+        return $defaultResponses;
     }
 
     protected function throwTraitMissingException()
